@@ -305,14 +305,14 @@ func handle(conn net.Conn) {
 		}
 		switch msg.Type {
 		case MessageText:
-			fmt.Printf("\r<%x>: %s\n> ", id, msg.Payload)
+			fmt.Printf("\r<%x> %s\n> ", id, msg.Payload)
 		case MessagePing:
 			peer.WriteMessage(Message{
 				Type:    MessagePong,
 				Payload: []byte{},
 			})
 		case MessagePong:
-			fmt.Printf("\r[%x]: Pong!\n> ", id)
+			fmt.Printf("\r[%x] Pong!\n> ", id)
 		}
 	}
 }
