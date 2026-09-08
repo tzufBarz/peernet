@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-type PeerID [16]byte
+type PeerID [32]byte
 
 type Peer struct {
 	ID      PeerID
@@ -15,11 +15,11 @@ type Peer struct {
 	writeMu sync.Mutex
 }
 
-var (
-	peerID  PeerID
-	peers   = make(map[PeerID]*Peer)
-	peersMu sync.RWMutex
-)
+type LocalPeer struct {
+	identity Identity
+	peers    map[PeerID]*Peer
+	peersMu  sync.RWMutex
+}
 
 func generateID() (PeerID, error) {
 	var id PeerID
@@ -31,7 +31,7 @@ func generateID() (PeerID, error) {
 	return id, nil
 }
 
-func listenLoop(listener net.Listener) {
+func (local *LocalPeer) listenLoop(listener net.Listener) {
 	defer listener.Close()
 
 	for {
@@ -41,28 +41,28 @@ func listenLoop(listener net.Listener) {
 			continue
 		}
 
-		go handle(conn)
+		go local.handle(conn)
 	}
 }
 
-func connect(address string) error {
+func (local *LocalPeer) connect(address string) error {
 	conn, err := net.Dial("tcp", address)
 	if err != nil {
 		return err
 	}
 
-	go handle(conn)
+	go local.handle(conn)
 
 	return nil
 }
 
-func disconnect(id PeerID) error {
-	peersMu.Lock()
-	peer, exists := peers[id]
+func (local *LocalPeer) disconnect(id PeerID) error {
+	local.peersMu.Lock()
+	peer, exists := local.peers[id]
 	if exists {
-		delete(peers, id)
+		delete(local.peers, id)
 	}
-	peersMu.Unlock()
+	local.peersMu.Unlock()
 
 	if exists {
 		return peer.Conn.Close()
@@ -77,20 +77,20 @@ func (peer *Peer) WriteMessage(msg Message) error {
 	return writeMessage(peer.Conn, msg)
 }
 
-func getPeer(id PeerID) (*Peer, error) {
-	peersMu.RLock()
-	defer peersMu.RUnlock()
-	peer, exists := peers[id]
+func (local *LocalPeer) getPeer(id PeerID) (*Peer, error) {
+	local.peersMu.RLock()
+	defer local.peersMu.RUnlock()
+	peer, exists := local.peers[id]
 	if !exists {
 		return nil, fmt.Errorf("unknown peer")
 	}
 	return peer, nil
 }
 
-func handle(conn net.Conn) {
+func (local *LocalPeer) handle(conn net.Conn) {
 	defer conn.Close()
 
-	id, err := handshake(conn)
+	id, err := handshake(conn, local.identity)
 	if err != nil {
 		fmt.Printf("\rHandshake with %s failed: %v\n> ", conn.RemoteAddr(), err)
 		return
@@ -101,26 +101,26 @@ func handle(conn net.Conn) {
 		Conn: conn,
 	}
 
-	peersMu.Lock()
+	local.peersMu.Lock()
 
-	if _, exists := peers[id]; exists {
-		peersMu.Unlock()
+	if _, exists := local.peers[id]; exists {
+		local.peersMu.Unlock()
 		return
 	}
 
-	peers[id] = peer
+	local.peers[id] = peer
 
-	peersMu.Unlock()
+	local.peersMu.Unlock()
 
 	defer func() {
-		peersMu.Lock()
+		local.peersMu.Lock()
 
-		peer, exists := peers[id]
+		peer, exists := local.peers[id]
 		if exists && peer.Conn == conn {
-			delete(peers, id)
+			delete(local.peers, id)
 		}
 
-		peersMu.Unlock()
+		local.peersMu.Unlock()
 	}()
 
 	fmt.Printf("\rConnected to %x\n> ", id)

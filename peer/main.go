@@ -10,17 +10,28 @@ import (
 )
 
 func main() {
-	port := flag.Int("p", 5000, "Port")
+	port := flag.Int("p", 5000, "Advertising port")
+	signature := flag.String("i", "", "Ed25519 identity signature file path")
 
 	flag.Parse()
 
-	var err error
-	peerID, err = generateID()
+	if *signature == "" {
+		fmt.Println("Identity is required")
+		flag.Usage()
+		return
+	}
+
+	identity, err := loadIdentity(*signature)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Peer ID: %x\n", peerID)
+	local := &LocalPeer{
+		identity: *identity,
+		peers:    make(map[PeerID]*Peer),
+	}
+
+	fmt.Printf("Peer ID: %x\n", identity.peerID)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
@@ -29,14 +40,14 @@ func main() {
 
 	fmt.Printf("Listening on :%d\n", *port)
 
-	go listenLoop(listener)
+	go local.listenLoop(listener)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
 	fmt.Print("> ")
 
 	for scanner.Scan() {
-		exit, err := executeCommand(scanner.Text())
+		exit, err := executeCommand(local, scanner.Text())
 		if err != nil {
 			fmt.Println(err)
 		}

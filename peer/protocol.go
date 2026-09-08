@@ -23,10 +23,10 @@ type Message struct {
 
 const MaxMessageSize = 1024 * 1024
 
-func handshake(conn net.Conn) (PeerID, error) {
+func handshake(conn net.Conn, identity Identity) (PeerID, error) {
 	if err := writeMessage(conn, Message{
 		Type:    MessagePeerID,
-		Payload: peerID[:],
+		Payload: identity.peerID[:],
 	}); err != nil {
 		return PeerID{}, err
 	}
