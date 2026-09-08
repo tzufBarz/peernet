@@ -95,6 +95,20 @@ func main() {
 				}
 				disconnect(PeerID(bytesId))
 			}
+		case "ping":
+			if len(parts) < 2 {
+				fmt.Println("Usage: ping <peer-id>")
+			} else {
+				bytesId, err := hex.DecodeString(parts[1])
+				if err != nil || len(bytesId) != len(PeerID{}) {
+					fmt.Println("Invalid ID")
+					break
+				}
+				if err := ping(PeerID(bytesId)); err != nil {
+					fmt.Printf("Failed to ping: %v\n", err)
+					break
+				}
+			}
 		case "exit":
 			return
 		default:
@@ -156,6 +170,20 @@ func disconnect(id PeerID) {
 	}
 }
 
+func ping(id PeerID) error {
+	peersMu.RLock()
+	peer, exists := peers[id]
+	if !exists {
+		peersMu.RUnlock()
+		return fmt.Errorf("unknown peer")
+	}
+	peersMu.RUnlock()
+	return peer.WriteMessage(Message{
+		Type:    MessagePing,
+		Payload: []byte{},
+	})
+}
+
 func handshake(conn net.Conn) (PeerID, error) {
 	if err := writeMessage(conn, Message{
 		Type:    MessagePeerID,
@@ -189,6 +217,11 @@ func handle(conn net.Conn) {
 		return
 	}
 
+	peer := &Peer{
+		ID:   id,
+		Conn: conn,
+	}
+
 	peersMu.Lock()
 
 	if _, exists := peers[id]; exists {
@@ -196,10 +229,7 @@ func handle(conn net.Conn) {
 		return
 	}
 
-	peers[id] = &Peer{
-		ID:   id,
-		Conn: conn,
-	}
+	peers[id] = peer
 
 	peersMu.Unlock()
 
@@ -222,8 +252,16 @@ func handle(conn net.Conn) {
 			fmt.Printf("\rDisconnected from %x\n> ", id)
 			return
 		}
-		if msg.Type == MessageText {
-			fmt.Printf("\r[%s]: %s\n> ", id, msg.Payload)
+		switch msg.Type {
+		case MessageText:
+			fmt.Printf("\r<%x>: %s\n> ", id, msg.Payload)
+		case MessagePing:
+			peer.WriteMessage(Message{
+				Type:    MessagePong,
+				Payload: []byte{},
+			})
+		case MessagePong:
+			fmt.Printf("\r[%x]: Pong!\n> ", id)
 		}
 	}
 }
