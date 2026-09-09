@@ -79,9 +79,12 @@ func sendCommand(local *LocalPeer, args string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to send message: %v", err)
 	}
+	defer func() {
+		peer.sendCounter++
+	}()
 	return peer.WriteMessage(Message{
 		Type:    MessageText,
-		Payload: []byte(argsArr[1]),
+		Payload: encrypt([]byte(argsArr[1]), peer.Session.SendAEAD, peer.sendCounter),
 	})
 }
 

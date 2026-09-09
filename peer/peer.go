@@ -9,9 +9,11 @@ import (
 type PeerID [32]byte
 
 type Peer struct {
-	ID      PeerID
-	Conn    net.Conn
-	writeMu sync.Mutex
+	Conn           net.Conn
+	WriteMu        sync.Mutex
+	Session        Session
+	sendCounter    uint64
+	receiveCounter uint64
 }
 
 type LocalPeer struct {
@@ -61,8 +63,8 @@ func (local *LocalPeer) disconnect(id PeerID) error {
 }
 
 func (peer *Peer) WriteMessage(msg Message) error {
-	peer.writeMu.Lock()
-	defer peer.writeMu.Unlock()
+	peer.WriteMu.Lock()
+	defer peer.WriteMu.Unlock()
 	return writeMessage(peer.Conn, msg)
 }
 
@@ -79,57 +81,63 @@ func (local *LocalPeer) getPeer(id PeerID) (*Peer, error) {
 func (local *LocalPeer) handle(conn net.Conn) {
 	defer conn.Close()
 
-	id, err := handshake(conn, local.identity)
+	session, err := handshake(conn, local.identity)
 	if err != nil {
 		fmt.Printf("\rHandshake with %s failed: %v\n> ", conn.RemoteAddr(), err)
 		return
 	}
 
 	peer := &Peer{
-		ID:   id,
-		Conn: conn,
+		Session: session,
+		Conn:    conn,
 	}
 
 	local.peersMu.Lock()
 
-	if _, exists := local.peers[id]; exists {
+	if _, exists := local.peers[session.PeerID]; exists {
 		local.peersMu.Unlock()
 		return
 	}
 
-	local.peers[id] = peer
+	local.peers[session.PeerID] = peer
 
 	local.peersMu.Unlock()
 
 	defer func() {
 		local.peersMu.Lock()
 
-		peer, exists := local.peers[id]
+		peer, exists := local.peers[session.PeerID]
 		if exists && peer.Conn == conn {
-			delete(local.peers, id)
+			delete(local.peers, session.PeerID)
 		}
 
 		local.peersMu.Unlock()
 	}()
 
-	fmt.Printf("\rConnected to %x\n> ", id)
+	fmt.Printf("\rConnected to %x\n> ", session.PeerID)
 
 	for {
 		msg, err := readMessage(conn)
 		if err != nil {
-			fmt.Printf("\rDisconnected from %x\n> ", id)
+			fmt.Printf("\rDisconnected from %x\n> ", session.PeerID)
 			return
 		}
 		switch msg.Type {
 		case MessageText:
-			fmt.Printf("\r<%x> %s\n> ", id, msg.Payload)
+			plaintext, err := decrypt(msg.Payload, session.ReceiveAEAD, peer.receiveCounter)
+			if err != nil {
+				fmt.Printf("Decryption failed: %v\n> ", err)
+				break
+			}
+			fmt.Printf("\r<%x> %s\n> ", session.PeerID, plaintext)
+			peer.receiveCounter++
 		case MessagePing:
 			peer.WriteMessage(Message{
 				Type:    MessagePong,
 				Payload: []byte{},
 			})
 		case MessagePong:
-			fmt.Printf("\r[%x] Pong!\n> ", id)
+			fmt.Printf("\r[%x] Pong!\n> ", session.PeerID)
 		}
 	}
 }

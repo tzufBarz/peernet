@@ -31,7 +31,7 @@ func main() {
 		peers:    make(map[PeerID]*Peer),
 	}
 
-	fmt.Printf("Peer ID: %x\n", identity.peerID)
+	fmt.Printf("Peer ID: %x\n", identity.PeerID)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {

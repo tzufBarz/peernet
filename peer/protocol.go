@@ -1,13 +1,18 @@
 package main
 
 import (
-	"bytes"
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/hkdf"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"slices"
+
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 type MessageType byte
@@ -20,9 +25,16 @@ const (
 	MessageText              MessageType = 4
 )
 
-type HandshakePayload struct {
-	Nonce     Nonce
-	PublicKey PublicKey
+type HandshakeState struct {
+	Nonce   Nonce
+	Private *ecdh.PrivateKey
+	Public  *ecdh.PublicKey
+}
+
+type Session struct {
+	PeerID      PeerID
+	SendAEAD    cipher.AEAD
+	ReceiveAEAD cipher.AEAD
 }
 
 type Message struct {
@@ -32,72 +44,90 @@ type Message struct {
 
 const MaxMessageSize = 1024 * 1024
 
-func handshake(conn net.Conn, identity Identity) (PeerID, error) {
-	nonce, err := generateNonce()
+func handshake(conn net.Conn, identity Identity) (Session, error) {
+	var session Session
+
+	state, err := createHandshakeState()
 	if err != nil {
-		return PeerID{}, err
-	}
-
-	payload := HandshakePayload{
-		Nonce:     nonce,
-		PublicKey: identity.public,
-	}
-
-	buf := new(bytes.Buffer)
-
-	if err := binary.Write(buf, binary.BigEndian, payload); err != nil {
-		return PeerID{}, err
+		return Session{}, err
 	}
 
 	if err := writeMessage(conn, Message{
 		Type:    MessageHandshake,
-		Payload: buf.Bytes(),
+		Payload: slices.Concat(state.Nonce[:], identity.Public, state.Public.Bytes()),
 	}); err != nil {
-		return PeerID{}, err
+		return Session{}, err
 	}
 
 	msg, err := readMessage(conn)
 	if err != nil {
-		return PeerID{}, err
+		return Session{}, err
 	}
 
 	if msg.Type != MessageHandshake {
-		return PeerID{}, fmt.Errorf("expected handshake message")
+		return Session{}, fmt.Errorf("expected handshake message")
 	}
 
-	if len(msg.Payload) != len(buf.Bytes()) {
-		return PeerID{}, fmt.Errorf("invalid handshake length: %d", len(msg.Payload))
+	if len(msg.Payload) != len(Nonce{})+X25519KeySize+ed25519.PublicKeySize {
+		return Session{}, fmt.Errorf("invalid handshake length: %d", len(msg.Payload))
 	}
 
-	rPayload := &HandshakePayload{}
-
-	if err := binary.Read(bytes.NewBuffer(msg.Payload), binary.BigEndian, rPayload); err != nil {
-		return PeerID{}, err
-	}
+	rNonce := msg.Payload[:len(Nonce{})]
+	rSPublic := msg.Payload[len(Nonce{}) : len(Nonce{})+ed25519.PublicKeySize]
+	rEPublic := msg.Payload[len(Nonce{})+ed25519.PublicKeySize:]
 
 	writeMessage(conn, Message{
 		Type:    MessageHandshakeResponse,
-		Payload: ed25519.Sign(identity.private[:], rPayload.Nonce[:]),
+		Payload: ed25519.Sign(identity.Private, slices.Concat(state.Nonce[:], identity.Public, state.Public.Bytes(), rNonce, rSPublic, rEPublic)),
 	})
 
 	msg, err = readMessage(conn)
 	if err != nil {
-		return PeerID{}, err
+		return Session{}, err
 	}
 
 	if msg.Type != MessageHandshakeResponse {
-		return PeerID{}, fmt.Errorf("expected handshake response message")
+		return Session{}, fmt.Errorf("expected handshake response message")
 	}
 
 	if len(msg.Payload) != SignatureLength {
-		return PeerID{}, fmt.Errorf("invalid signature length: %d", len(msg.Payload))
+		return Session{}, fmt.Errorf("invalid signature length: %d", len(msg.Payload))
 	}
 
-	if !ed25519.Verify(rPayload.PublicKey[:], nonce[:], msg.Payload) {
-		return PeerID{}, fmt.Errorf("verification failed")
+	if !ed25519.Verify(rSPublic, slices.Concat(rNonce, rSPublic, rEPublic, state.Nonce[:], identity.Public, state.Public.Bytes()), msg.Payload) {
+		return Session{}, fmt.Errorf("verification failed")
 	}
 
-	return PeerID(sha256.Sum256(rPayload.PublicKey[:])), nil
+	rSPublicKey, err := ecdh.X25519().NewPublicKey(rEPublic)
+	if err != nil {
+		return Session{}, err
+	}
+
+	secret, err := state.Private.ECDH(rSPublicKey)
+	if err != nil {
+		return Session{}, err
+	}
+
+	session.PeerID = PeerID(sha256.Sum256(rSPublic))
+
+	sendKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), session.PeerID[:])), EncryptionKeyLength)
+	if err != nil {
+		return Session{}, err
+	}
+	session.SendAEAD, err = chacha20poly1305.NewX(sendKey)
+	if err != nil {
+		return Session{}, err
+	}
+	receiveKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), identity.PeerID[:])), EncryptionKeyLength)
+	if err != nil {
+		return Session{}, err
+	}
+	session.ReceiveAEAD, err = chacha20poly1305.NewX(receiveKey)
+	if err != nil {
+		return Session{}, err
+	}
+
+	return session, nil
 }
 
 func writeMessage(w io.Writer, msg Message) error {

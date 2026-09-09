@@ -1,25 +1,31 @@
 package main
 
 import (
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
 	"os"
 )
 
-type PrivateKey [ed25519.PrivateKeySize]byte
-type PublicKey [ed25519.PublicKeySize]byte
 type Nonce [32]byte
 
-const SignatureLength = 64
+const (
+	SignatureLength       = 64
+	X25519KeySize         = 32
+	EncryptionKeyLength   = 32
+	EncryptionNonceLength = 24
+)
 
 type Identity struct {
-	private PrivateKey
-	public  PublicKey
-	peerID  PeerID
+	Private ed25519.PrivateKey
+	Public  ed25519.PublicKey
+	PeerID  PeerID
 }
 
 func loadIdentity(path string) (*Identity, error) {
@@ -43,20 +49,52 @@ func loadIdentity(path string) (*Identity, error) {
 		return nil, fmt.Errorf("incorrect key - Ed25519 required")
 	}
 
-	identity.private = PrivateKey(confirmedPrivate)
+	identity.Private = ed25519.PrivateKey(confirmedPrivate)
 
-	identity.public = PublicKey(confirmedPrivate.Public().(ed25519.PublicKey))
-	identity.peerID = PeerID(sha256.Sum256(identity.public[:]))
+	identity.Public = ed25519.PublicKey(confirmedPrivate.Public().(ed25519.PublicKey))
+	identity.PeerID = PeerID(sha256.Sum256(identity.Public))
 
 	return identity, nil
 }
 
-func generateNonce() (Nonce, error) {
-	var nonce Nonce
+func createHandshakeState() (HandshakeState, error) {
+	handshakeState := HandshakeState{}
 
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return Nonce{}, err
+	if _, err := rand.Read(handshakeState.Nonce[:]); err != nil {
+		return HandshakeState{}, err
 	}
 
-	return nonce, nil
+	var err error
+	handshakeState.Private, err = ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return HandshakeState{}, err
+	}
+
+	handshakeState.Public = handshakeState.Private.PublicKey()
+
+	return handshakeState, nil
+}
+
+func encrypt(plaintext []byte, aead cipher.AEAD, sendCounter uint64) []byte {
+	fmt.Println(sendCounter)
+	nonce := make([]byte, EncryptionNonceLength)
+	binary.BigEndian.PutUint64(nonce, sendCounter)
+
+	dst := make([]byte, 0, len(plaintext)+aead.Overhead())
+	ciphertext := aead.Seal(dst, nonce, plaintext, nil)
+
+	return ciphertext
+}
+
+func decrypt(ciphertext []byte, aead cipher.AEAD, receiveCounter uint64) ([]byte, error) {
+	fmt.Println(receiveCounter)
+	nonce := make([]byte, EncryptionNonceLength)
+	binary.BigEndian.PutUint64(nonce, receiveCounter)
+
+	plaintext, err := aead.Open(ciphertext[:0], nonce, ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return plaintext, nil
 }
