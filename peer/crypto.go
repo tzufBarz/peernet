@@ -76,7 +76,6 @@ func createHandshakeState() (HandshakeState, error) {
 }
 
 func encrypt(plaintext []byte, aead cipher.AEAD, sendCounter uint64) []byte {
-	fmt.Println(sendCounter)
 	nonce := make([]byte, EncryptionNonceLength)
 	binary.BigEndian.PutUint64(nonce, sendCounter)
 
@@ -87,7 +86,6 @@ func encrypt(plaintext []byte, aead cipher.AEAD, sendCounter uint64) []byte {
 }
 
 func decrypt(ciphertext []byte, aead cipher.AEAD, receiveCounter uint64) ([]byte, error) {
-	fmt.Println(receiveCounter)
 	nonce := make([]byte, EncryptionNonceLength)
 	binary.BigEndian.PutUint64(nonce, receiveCounter)
 
