@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
@@ -37,14 +38,20 @@ func handshake(conn net.Conn, identity Identity) (PeerID, error) {
 		return PeerID{}, err
 	}
 
-	var payload [ed25519.PublicKeySize + len(Nonce{})]byte
+	payload := HandshakePayload{
+		Nonce:     nonce,
+		PublicKey: identity.public,
+	}
 
-	copy(payload[:ed25519.PublicKeySize], identity.public[:])
-	copy(payload[ed25519.PublicKeySize:], nonce[:])
+	buf := new(bytes.Buffer)
+
+	if err := binary.Write(buf, binary.BigEndian, payload); err != nil {
+		return PeerID{}, err
+	}
 
 	if err := writeMessage(conn, Message{
 		Type:    MessageHandshake,
-		Payload: payload[:],
+		Payload: buf.Bytes(),
 	}); err != nil {
 		return PeerID{}, err
 	}
@@ -58,14 +65,19 @@ func handshake(conn net.Conn, identity Identity) (PeerID, error) {
 		return PeerID{}, fmt.Errorf("expected handshake message")
 	}
 
-	if len(msg.Payload) != (ed25519.PublicKeySize + len(Nonce{})) {
+	if len(msg.Payload) != len(buf.Bytes()) {
 		return PeerID{}, fmt.Errorf("invalid handshake length: %d", len(msg.Payload))
 	}
 
-	receivedPub := ed25519.PublicKey(msg.Payload[:ed25519.PublicKeySize])
+	rPayload := &HandshakePayload{}
+
+	if err := binary.Read(bytes.NewBuffer(msg.Payload), binary.BigEndian, rPayload); err != nil {
+		return PeerID{}, err
+	}
+
 	writeMessage(conn, Message{
 		Type:    MessageHandshakeResponse,
-		Payload: ed25519.Sign(identity.private[:], msg.Payload[ed25519.PublicKeySize:]),
+		Payload: ed25519.Sign(identity.private[:], rPayload.Nonce[:]),
 	})
 
 	msg, err = readMessage(conn)
@@ -81,11 +93,11 @@ func handshake(conn net.Conn, identity Identity) (PeerID, error) {
 		return PeerID{}, fmt.Errorf("invalid signature length: %d", len(msg.Payload))
 	}
 
-	if !ed25519.Verify(receivedPub, nonce[:], msg.Payload) {
+	if !ed25519.Verify(rPayload.PublicKey[:], nonce[:], msg.Payload) {
 		return PeerID{}, fmt.Errorf("verification failed")
 	}
 
-	return PeerID(sha256.Sum256(receivedPub)), nil
+	return PeerID(sha256.Sum256(rPayload.PublicKey[:])), nil
 }
 
 func writeMessage(w io.Writer, msg Message) error {

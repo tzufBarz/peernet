@@ -23,7 +23,7 @@ func main() {
 
 	identity, err := loadIdentity(*signature)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to load identity: %v", err)
 	}
 
 	local := &LocalPeer{
