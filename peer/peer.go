@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"fmt"
 	"net"
 	"sync"
@@ -19,16 +18,6 @@ type LocalPeer struct {
 	identity Identity
 	peers    map[PeerID]*Peer
 	peersMu  sync.RWMutex
-}
-
-func generateID() (PeerID, error) {
-	var id PeerID
-
-	if _, err := rand.Read(id[:]); err != nil {
-		return PeerID{}, err
-	}
-
-	return id, nil
 }
 
 func (local *LocalPeer) listenLoop(listener net.Listener) {
