@@ -79,13 +79,14 @@ func sendCommand(local *LocalPeer, args string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to send message: %v", err)
 	}
-	defer func() {
-		peer.sendCounter++
-	}()
-	return peer.WriteMessage(Message{
+	err = peer.WriteMessage(Message{
 		Type:    MessageText,
-		Payload: encrypt([]byte(argsArr[1]), peer.Session.SendAEAD, peer.sendCounter),
+		Payload: encrypt([]byte(argsArr[1]), peer.Session.SendAEAD, peer.sendCounter.Load()),
 	})
+	if err == nil {
+		peer.sendCounter.Add(1)
+	}
+	return err
 }
 
 func parsePeerID(hexID string) (PeerID, error) {

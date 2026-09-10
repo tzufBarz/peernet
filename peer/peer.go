@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 type PeerID [32]byte
@@ -12,8 +13,8 @@ type Peer struct {
 	Conn           net.Conn
 	WriteMu        sync.Mutex
 	Session        Session
-	sendCounter    uint64
-	receiveCounter uint64
+	sendCounter    atomic.Uint64
+	receiveCounter atomic.Uint64
 }
 
 type LocalPeer struct {
@@ -124,13 +125,13 @@ func (local *LocalPeer) handle(conn net.Conn) {
 		}
 		switch msg.Type {
 		case MessageText:
-			plaintext, err := decrypt(msg.Payload, session.ReceiveAEAD, peer.receiveCounter)
+			plaintext, err := decrypt(msg.Payload, session.ReceiveAEAD, peer.receiveCounter.Load())
 			if err != nil {
 				fmt.Printf("Decryption failed: %v\n> ", err)
 				break
 			}
 			fmt.Printf("\r<%x> %s\n> ", session.PeerID, plaintext)
-			peer.receiveCounter++
+			peer.receiveCounter.Add(1)
 		case MessagePing:
 			peer.WriteMessage(Message{
 				Type:    MessagePong,
