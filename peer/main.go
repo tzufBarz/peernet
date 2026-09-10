@@ -12,6 +12,7 @@ import (
 func main() {
 	port := flag.Int("p", 5000, "Advertising port")
 	signature := flag.String("i", "", "Ed25519 identity signature file path")
+	allowpath := flag.String("a", "", "Public key allow list text file")
 
 	flag.Parse()
 
@@ -21,14 +22,26 @@ func main() {
 		return
 	}
 
+	if *allowpath == "" {
+		fmt.Println("Allow list is required")
+		flag.Usage()
+		return
+	}
+
+	allowlist, err := loadAllowlist(*allowpath)
+	if err != nil {
+		log.Fatalf("Failed to load allow list file: %v", err)
+	}
+
 	identity, err := loadIdentity(*signature)
 	if err != nil {
 		log.Fatalf("Failed to load identity: %v", err)
 	}
 
 	local := &LocalPeer{
-		identity: *identity,
-		peers:    make(map[PeerID]*Peer),
+		identity:  *identity,
+		peers:     make(map[PeerID]*Peer),
+		allowlist: allowlist,
 	}
 
 	fmt.Printf("Peer ID: %x\n", identity.PeerID)

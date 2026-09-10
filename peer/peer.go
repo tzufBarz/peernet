@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"crypto/ed25519"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 )
 
 type PeerID [32]byte
+
+type Allowlist map[[ed25519.PublicKeySize]byte]bool
 
 type Peer struct {
 	Conn           net.Conn
@@ -18,9 +24,10 @@ type Peer struct {
 }
 
 type LocalPeer struct {
-	identity Identity
-	peers    map[PeerID]*Peer
-	peersMu  sync.RWMutex
+	identity  Identity
+	peers     map[PeerID]*Peer
+	peersMu   sync.RWMutex
+	allowlist Allowlist
 }
 
 func (local *LocalPeer) listenLoop(listener net.Listener) {
@@ -88,6 +95,11 @@ func (local *LocalPeer) handle(conn net.Conn) {
 		return
 	}
 
+	if !local.allowlist.Contains(session.PublicKey) {
+		fmt.Printf("\rKey not allowed: %x\n> ", session.PublicKey)
+		return
+	}
+
 	peer := &Peer{
 		Session: session,
 		Conn:    conn,
@@ -141,4 +153,45 @@ func (local *LocalPeer) handle(conn net.Conn) {
 			fmt.Printf("\r[%x] Pong!\n> ", session.PeerID)
 		}
 	}
+}
+
+func loadAllowlist(allowpath string) (Allowlist, error) {
+	file, err := os.Open(allowpath)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make(Allowlist)
+
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		bytes, err := hex.DecodeString(line)
+		if err != nil {
+			return nil, err
+		}
+		if len(bytes) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("invalid public key length: %d", len(bytes))
+		}
+
+		var key [ed25519.PublicKeySize]byte
+		copy(key[:], ed25519.PublicKey(bytes))
+		list[key] = true
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("Error encountered while reading allowlist: %v", err)
+	}
+
+	return list, nil
+}
+
+func (list Allowlist) Contains(key ed25519.PublicKey) bool {
+	var arr [ed25519.PublicKeySize]byte
+	copy(arr[:], key)
+
+	return list[arr]
 }

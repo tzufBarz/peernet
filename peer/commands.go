@@ -92,7 +92,7 @@ func sendCommand(local *LocalPeer, args string) error {
 func parsePeerID(hexID string) (PeerID, error) {
 	bytesId, err := hex.DecodeString(hexID)
 	if err != nil || len(bytesId) != len(PeerID{}) {
-		return PeerID{}, fmt.Errorf("Invalid ID")
+		return PeerID{}, fmt.Errorf("invalid ID")
 	}
 	return PeerID(bytesId), nil
 }

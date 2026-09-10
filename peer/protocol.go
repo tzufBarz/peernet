@@ -33,6 +33,7 @@ type HandshakeState struct {
 
 type Session struct {
 	PeerID      PeerID
+	PublicKey   ed25519.PublicKey
 	SendAEAD    cipher.AEAD
 	ReceiveAEAD cipher.AEAD
 }
@@ -108,6 +109,7 @@ func handshake(conn net.Conn, identity Identity) (Session, error) {
 		return Session{}, err
 	}
 
+	session.PublicKey = rSPublic
 	session.PeerID = PeerID(sha256.Sum256(rSPublic))
 
 	sendKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), session.PeerID[:])), EncryptionKeyLength)
