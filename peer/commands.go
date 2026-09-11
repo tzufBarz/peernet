@@ -60,10 +60,9 @@ func pingCommand(local *LocalPeer, args string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to ping: %v", err)
 	}
-	return peer.WriteMessage(Message{
-		Type:    MessagePing,
-		Payload: []byte{},
-	})
+	peer.WriteMessage(Message{Type: MessagePing})
+
+	return nil
 }
 
 func sendCommand(local *LocalPeer, args string) error {
@@ -79,14 +78,12 @@ func sendCommand(local *LocalPeer, args string) error {
 	if err != nil {
 		return fmt.Errorf("Failed to send message: %v", err)
 	}
-	err = peer.WriteMessage(Message{
+	peer.WriteMessage(Message{
 		Type:    MessageText,
-		Payload: encrypt([]byte(argsArr[1]), peer.Session.SendAEAD, peer.sendCounter.Load()),
+		Payload: []byte(argsArr[1]),
 	})
-	if err == nil {
-		peer.sendCounter.Add(1)
-	}
-	return err
+
+	return nil
 }
 
 func parsePeerID(hexID string) (PeerID, error) {

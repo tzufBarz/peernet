@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"sync/atomic"
 )
 
 type PeerID [32]byte
@@ -19,8 +18,8 @@ type Peer struct {
 	Conn           net.Conn
 	WriteMu        sync.Mutex
 	Session        Session
-	sendCounter    atomic.Uint64
-	receiveCounter atomic.Uint64
+	sendCounter    uint64
+	receiveCounter uint64
 }
 
 type LocalPeer struct {
@@ -70,10 +69,41 @@ func (local *LocalPeer) disconnect(id PeerID) error {
 	return nil
 }
 
-func (peer *Peer) WriteMessage(msg Message) error {
+func (peer *Peer) WriteMessage(msg Message) {
 	peer.WriteMu.Lock()
 	defer peer.WriteMu.Unlock()
-	return writeMessage(peer.Conn, msg)
+
+	shouldEncrypt := encryptedTypes[msg.Type]
+
+	if shouldEncrypt {
+		msg.Payload = encrypt(msg.Payload, peer.Session.SendAEAD, peer.sendCounter)
+	}
+
+	if err := writeMessage(peer.Conn, msg); err != nil {
+		peer.Conn.Close()
+		return
+	}
+
+	if shouldEncrypt {
+		peer.sendCounter++
+	}
+}
+
+func (peer *Peer) ReadMessage() (Message, error) {
+	msg, err := readMessage(peer.Conn)
+	if err != nil {
+		return Message{}, err
+	}
+
+	if encryptedTypes[msg.Type] {
+		msg.Payload, err = decrypt(msg.Payload, peer.Session.ReceiveAEAD, peer.receiveCounter)
+		if err != nil {
+			return Message{}, fmt.Errorf("decryption failed: %v", err)
+		}
+		peer.receiveCounter++
+	}
+
+	return msg, nil
 }
 
 func (local *LocalPeer) getPeer(id PeerID) (*Peer, error) {
@@ -130,25 +160,16 @@ func (local *LocalPeer) handle(conn net.Conn) {
 	fmt.Printf("\rConnected to %x\n> ", session.PeerID)
 
 	for {
-		msg, err := readMessage(conn)
+		msg, err := peer.ReadMessage()
 		if err != nil {
-			fmt.Printf("\rDisconnected from %x\n> ", session.PeerID)
+			fmt.Printf("\rDisconnected from %x: %v\n> ", session.PeerID, err)
 			return
 		}
 		switch msg.Type {
 		case MessageText:
-			plaintext, err := decrypt(msg.Payload, session.ReceiveAEAD, peer.receiveCounter.Load())
-			if err != nil {
-				fmt.Printf("Decryption failed: %v\n> ", err)
-				break
-			}
-			fmt.Printf("\r<%x> %s\n> ", session.PeerID, plaintext)
-			peer.receiveCounter.Add(1)
+			fmt.Printf("\r<%x> %s\n> ", session.PeerID, msg.Payload)
 		case MessagePing:
-			peer.WriteMessage(Message{
-				Type:    MessagePong,
-				Payload: []byte{},
-			})
+			peer.WriteMessage(Message{Type: MessagePong})
 		case MessagePong:
 			fmt.Printf("\r[%x] Pong!\n> ", session.PeerID)
 		}

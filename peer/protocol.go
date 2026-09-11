@@ -25,6 +25,8 @@ const (
 	MessageText              MessageType = 4
 )
 
+var encryptedTypes = map[MessageType]bool{MessageText: true}
+
 type HandshakeState struct {
 	Nonce   Nonce
 	Private *ecdh.PrivateKey
