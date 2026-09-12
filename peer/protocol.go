@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -45,7 +46,10 @@ type Message struct {
 	Payload []byte
 }
 
-const MaxMessageSize = 1024 * 1024
+const (
+	MaxMessageSize   = 1024 * 1024
+	handshakeTimeout = time.Second
+)
 
 func handshake(conn net.Conn, identity Identity) (Session, error) {
 	var session Session
@@ -54,6 +58,8 @@ func handshake(conn net.Conn, identity Identity) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+
+	conn.SetDeadline(time.Now().Add(handshakeTimeout))
 
 	if err := writeMessage(conn, Message{
 		Type:    MessageHandshake,
@@ -130,6 +136,8 @@ func handshake(conn net.Conn, identity Identity) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+
+	conn.SetDeadline(time.Time{})
 
 	return session, nil
 }
