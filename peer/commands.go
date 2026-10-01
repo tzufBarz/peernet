@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -44,19 +43,14 @@ func connectCommand(local *LocalPeer, args string) error {
 }
 
 func disconnectCommand(local *LocalPeer, args string) error {
-	id, err := parsePeerID(args)
-	if err != nil {
-		return err
+	if err := local.disconnect(args); err != nil {
+		return fmt.Errorf("Failed to disconnect: %v", err)
 	}
-	return local.disconnect(id)
+	return nil
 }
 
 func pingCommand(local *LocalPeer, args string) error {
-	id, err := parsePeerID(args)
-	if err != nil {
-		return err
-	}
-	peer, err := local.getPeer(id)
+	peer, err := local.getPeer(args)
 	if err != nil {
 		return fmt.Errorf("Failed to ping: %v", err)
 	}
@@ -70,11 +64,8 @@ func sendCommand(local *LocalPeer, args string) error {
 	if len(argsArr) < 2 {
 		return fmt.Errorf("Usage: send <peer-id> <message>")
 	}
-	id, err := parsePeerID(argsArr[0])
-	if err != nil {
-		return err
-	}
-	peer, err := local.getPeer(id)
+
+	peer, err := local.getPeer(argsArr[0])
 	if err != nil {
 		return fmt.Errorf("Failed to send message: %v", err)
 	}
@@ -84,12 +75,4 @@ func sendCommand(local *LocalPeer, args string) error {
 	})
 
 	return nil
-}
-
-func parsePeerID(hexID string) (PeerID, error) {
-	bytesId, err := hex.DecodeString(hexID)
-	if err != nil || len(bytesId) != len(PeerID{}) {
-		return PeerID{}, fmt.Errorf("invalid ID")
-	}
-	return PeerID(bytesId), nil
 }

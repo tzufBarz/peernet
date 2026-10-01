@@ -36,7 +36,6 @@ type HandshakeState struct {
 
 type Session struct {
 	PeerID      PeerID
-	PublicKey   ed25519.PublicKey
 	SendAEAD    cipher.AEAD
 	ReceiveAEAD cipher.AEAD
 }
@@ -51,7 +50,9 @@ const (
 	handshakeTimeout = time.Second
 )
 
-func handshake(conn net.Conn, identity Identity) (Session, error) {
+type PeerValidator func(PeerID) bool
+
+func handshake(conn net.Conn, identity Identity, validate PeerValidator) (Session, error) {
 	var session Session
 
 	state, err := createHandshakeState()
@@ -82,8 +83,14 @@ func handshake(conn net.Conn, identity Identity) (Session, error) {
 	}
 
 	rNonce := msg.Payload[:len(Nonce{})]
-	rSPublic := msg.Payload[len(Nonce{}) : len(Nonce{})+ed25519.PublicKeySize]
-	rEPublic := msg.Payload[len(Nonce{})+ed25519.PublicKeySize:]
+	rSPublic := msg.Payload[len(Nonce{}) : len(Nonce{})+X25519KeySize]
+	rEPublic := msg.Payload[len(Nonce{})+X25519KeySize:]
+
+	rID := sha256.Sum256(rSPublic)
+
+	if validate != nil && !validate(rID) {
+		return Session{}, fmt.Errorf("peer %x not allowed", rID)
+	}
 
 	writeMessage(conn, Message{
 		Type:    MessageHandshakeResponse,
@@ -117,7 +124,6 @@ func handshake(conn net.Conn, identity Identity) (Session, error) {
 		return Session{}, err
 	}
 
-	session.PublicKey = rSPublic
 	session.PeerID = PeerID(sha256.Sum256(rSPublic))
 
 	sendKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), session.PeerID[:])), EncryptionKeyLength)

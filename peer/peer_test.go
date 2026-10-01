@@ -61,8 +61,12 @@ func newConnectedPeerPair(t *testing.T) (*Peer, *Peer) {
 	return &Peer{Conn: conn1, Session: result1.Session}, &Peer{Conn: conn2, Session: result2.Session}
 }
 
+func fakeValidate(id PeerID) bool {
+	return true
+}
+
 func asyncHandshake(resultChan chan HandshakeResult, conn net.Conn, identity Identity) {
-	session, err := handshake(conn, identity)
+	session, err := handshake(conn, identity, fakeValidate)
 	if err != nil {
 		resultChan <- HandshakeResult{Err: err}
 		return

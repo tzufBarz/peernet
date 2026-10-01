@@ -12,7 +12,7 @@ import (
 func main() {
 	port := flag.Int("p", 5000, "Advertising port")
 	signature := flag.String("i", "", "Ed25519 identity signature file path")
-	allowpath := flag.String("a", "", "Public key allow list text file")
+	peerstorePath := flag.String("ps", "", "Peerstore TOML file")
 
 	flag.Parse()
 
@@ -22,15 +22,15 @@ func main() {
 		return
 	}
 
-	if *allowpath == "" {
+	if *peerstorePath == "" {
 		fmt.Println("Allow list is required")
 		flag.Usage()
 		return
 	}
 
-	allowlist, err := loadAllowlist(*allowpath)
+	peerStore, err := loadPeerStore(*peerstorePath)
 	if err != nil {
-		log.Fatalf("Failed to load allow list file: %v", err)
+		log.Fatalf("Failed to load peerstore file: %v", err)
 	}
 
 	identity, err := loadIdentity(*signature)
@@ -41,7 +41,7 @@ func main() {
 	local := &LocalPeer{
 		identity:  *identity,
 		peers:     make(map[PeerID]*Peer),
-		allowlist: allowlist,
+		peerStore: peerStore,
 	}
 
 	fmt.Printf("Peer ID: %x\n", identity.PeerID)

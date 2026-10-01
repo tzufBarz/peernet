@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"crypto/ed25519"
-	"encoding/hex"
 	"fmt"
 	"net"
-	"os"
 	"sync"
 )
 
@@ -26,7 +23,7 @@ type LocalPeer struct {
 	identity  Identity
 	peers     map[PeerID]*Peer
 	peersMu   sync.RWMutex
-	allowlist Allowlist
+	peerStore *PeerStore
 }
 
 func (local *LocalPeer) listenLoop(listener net.Listener) {
@@ -43,8 +40,13 @@ func (local *LocalPeer) listenLoop(listener net.Listener) {
 	}
 }
 
-func (local *LocalPeer) connect(address string) error {
-	conn, err := net.Dial("tcp", address)
+func (local *LocalPeer) connect(name string) error {
+	record, ok := local.peerStore.GetByName(name)
+	if !ok {
+		return fmt.Errorf("unknown peer: %s", name)
+	}
+
+	conn, err := net.Dial("tcp", record.Address)
 	if err != nil {
 		return err
 	}
@@ -54,11 +56,16 @@ func (local *LocalPeer) connect(address string) error {
 	return nil
 }
 
-func (local *LocalPeer) disconnect(id PeerID) error {
+func (local *LocalPeer) disconnect(name string) error {
+	record, ok := local.peerStore.GetByName(name)
+	if !ok {
+		return fmt.Errorf("unknown peer: %s", name)
+	}
+
 	local.peersMu.Lock()
-	peer, exists := local.peers[id]
+	peer, exists := local.peers[record.ID]
 	if exists {
-		delete(local.peers, id)
+		delete(local.peers, record.ID)
 	}
 	local.peersMu.Unlock()
 
@@ -106,27 +113,32 @@ func (peer *Peer) ReadMessage() (Message, error) {
 	return msg, nil
 }
 
-func (local *LocalPeer) getPeer(id PeerID) (*Peer, error) {
+func (local *LocalPeer) getPeer(name string) (*Peer, error) {
+	record, ok := local.peerStore.GetByName(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown peer: %s", name)
+	}
+
 	local.peersMu.RLock()
 	defer local.peersMu.RUnlock()
-	peer, exists := local.peers[id]
+	peer, exists := local.peers[record.ID]
 	if !exists {
 		return nil, fmt.Errorf("unknown peer")
 	}
 	return peer, nil
 }
 
+func (local *LocalPeer) validate(id PeerID) bool {
+	_, allowed := local.peerStore.GetByID(id)
+	return allowed
+}
+
 func (local *LocalPeer) handle(conn net.Conn) {
 	defer conn.Close()
 
-	session, err := handshake(conn, local.identity)
+	session, err := handshake(conn, local.identity, local.validate)
 	if err != nil {
 		fmt.Printf("\rHandshake with %s failed: %v\n> ", conn.RemoteAddr(), err)
-		return
-	}
-
-	if !local.allowlist.Contains(session.PublicKey) {
-		fmt.Printf("\rKey not allowed: %x\n> ", session.PublicKey)
 		return
 	}
 
@@ -162,52 +174,19 @@ func (local *LocalPeer) handle(conn net.Conn) {
 	for {
 		msg, err := peer.ReadMessage()
 		if err != nil {
-			fmt.Printf("\rDisconnected from %x: %v\n> ", session.PeerID, err)
+			fmt.Printf("\rDisconnected from %s: %v\n> ", local.getPeerName(session.PeerID), err)
 			return
 		}
+
 		switch msg.Type {
 		case MessageText:
-			fmt.Printf("\r<%x> %s\n> ", session.PeerID, msg.Payload)
+			fmt.Printf("\r<%s> %s\n> ", local.getPeerName(session.PeerID), msg.Payload)
 		case MessagePing:
 			peer.WriteMessage(Message{Type: MessagePong})
 		case MessagePong:
-			fmt.Printf("\r[%x] Pong!\n> ", session.PeerID)
+			fmt.Printf("\r[%s] Pong!\n> ", local.getPeerName(session.PeerID))
 		}
 	}
-}
-
-func loadAllowlist(allowpath string) (Allowlist, error) {
-	file, err := os.Open(allowpath)
-	if err != nil {
-		return nil, err
-	}
-
-	list := make(Allowlist)
-
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		bytes, err := hex.DecodeString(line)
-		if err != nil {
-			return nil, err
-		}
-		if len(bytes) != ed25519.PublicKeySize {
-			return nil, fmt.Errorf("invalid public key length: %d", len(bytes))
-		}
-
-		var key [ed25519.PublicKeySize]byte
-		copy(key[:], ed25519.PublicKey(bytes))
-		list[key] = true
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("Error encountered while reading allowlist: %v", err)
-	}
-
-	return list, nil
 }
 
 func (list Allowlist) Contains(key ed25519.PublicKey) bool {
@@ -215,4 +194,12 @@ func (list Allowlist) Contains(key ed25519.PublicKey) bool {
 	copy(arr[:], key)
 
 	return list[arr]
+}
+
+func (local *LocalPeer) getPeerName(id PeerID) string {
+	if info, ok := local.peerStore.GetByID(id); ok && info.Name != "" {
+		return info.Name
+	}
+
+	return fmt.Sprintf("%x", id[:4])
 }
