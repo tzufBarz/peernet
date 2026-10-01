@@ -19,9 +19,10 @@ type PeerRecord struct {
 }
 
 type PeerStore struct {
-	mu     sync.RWMutex
-	peers  map[PeerID]*PeerRecord
-	byName map[string]PeerID
+	mu       sync.RWMutex
+	peers    map[PeerID]*PeerRecord
+	byName   map[string]PeerID
+	filePath string
 }
 
 type rawPeerRecord struct {
@@ -43,8 +44,9 @@ func loadPeerStore(filePath string) (*PeerStore, error) {
 	}
 
 	store := &PeerStore{
-		peers:  make(map[PeerID]*PeerRecord),
-		byName: make(map[string]PeerID),
+		peers:    make(map[PeerID]*PeerRecord),
+		byName:   make(map[string]PeerID),
+		filePath: filePath,
 	}
 
 	for name, raw := range rawPeers.Peers {
@@ -85,11 +87,59 @@ func (store *PeerStore) GetByName(name string) (*PeerRecord, bool) {
 	return store.GetByID(id)
 }
 
-func (store *PeerStore) UpdateAddress(id PeerID, addr string) {
+func (store *PeerStore) UpdateAddress(id PeerID, addr string) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	if record, ok := store.peers[id]; ok {
-		record.Address = addr
+	record, ok := store.peers[id]
+	if !ok {
+		return nil
 	}
+
+	if record.Address == addr {
+		return nil
+	}
+
+	record.Address = addr
+
+	return store.saveToFileLocked()
+}
+
+func (store *PeerStore) saveToFileLocked() error {
+	exportMap := make(map[string]rawPeerRecord)
+
+	for name, id := range store.byName {
+		if peer, exists := store.peers[id]; exists {
+			exportMap[name] = rawPeerRecord{
+				PublicKey: hex.EncodeToString(peer.PublicKey),
+				Address:   peer.Address,
+			}
+		}
+	}
+
+	rawPeers := struct {
+		Peers map[string]rawPeerRecord `toml:"peers"`
+	}{
+		Peers: exportMap,
+	}
+
+	tmpFile := store.filePath + ".tmp"
+	f, err := os.OpenFile(tmpFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	encoder := toml.NewEncoder(f)
+	if err := encoder.Encode(rawPeers); err != nil {
+		f.Close()
+		os.Remove(tmpFile)
+		return fmt.Errorf("failed to encode toml: %w", err)
+	}
+	f.Close()
+
+	if err := os.Rename(tmpFile, store.filePath); err != nil {
+		return fmt.Errorf("failed to replace peer file: %w", err)
+	}
+
+	return nil
 }
