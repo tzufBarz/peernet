@@ -23,7 +23,7 @@ func main() {
 	}
 
 	if *peerstorePath == "" {
-		fmt.Println("Allow list is required")
+		fmt.Println("Peer store file is required")
 		flag.Usage()
 		return
 	}
@@ -39,9 +39,10 @@ func main() {
 	}
 
 	local := &LocalPeer{
-		identity:  *identity,
-		peers:     make(map[PeerID]*Peer),
-		peerStore: peerStore,
+		identity:   *identity,
+		peers:      make(map[PeerID]*Peer),
+		peerStore:  peerStore,
+		listenPort: uint16(*port),
 	}
 
 	fmt.Printf("Peer ID: %x\n", identity.PeerID)

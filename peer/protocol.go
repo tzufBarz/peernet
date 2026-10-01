@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -52,44 +53,51 @@ const (
 
 type PeerValidator func(PeerID) bool
 
-func handshake(conn net.Conn, identity Identity, validate PeerValidator) (Session, error) {
+func handshake(conn net.Conn, identity Identity, lPort uint16, validate PeerValidator) (Session, string, error) {
 	var session Session
 
 	state, err := createHandshakeState()
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
+
+	rHost, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	lPortBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(lPortBytes, lPort)
 
 	conn.SetDeadline(time.Now().Add(handshakeTimeout))
 
 	if err := writeMessage(conn, Message{
 		Type:    MessageHandshake,
-		Payload: slices.Concat(state.Nonce[:], identity.Public, state.Public.Bytes()),
+		Payload: slices.Concat(state.Nonce[:], identity.Public, state.Public.Bytes(), lPortBytes),
 	}); err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	msg, err := readMessage(conn)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	if msg.Type != MessageHandshake {
-		return Session{}, fmt.Errorf("expected handshake message")
+		return Session{}, "", fmt.Errorf("expected handshake message")
 	}
 
-	if len(msg.Payload) != len(Nonce{})+X25519KeySize+ed25519.PublicKeySize {
-		return Session{}, fmt.Errorf("invalid handshake length: %d", len(msg.Payload))
+	if len(msg.Payload) != len(Nonce{})+ed25519.PublicKeySize+X25519KeySize+2 {
+		return Session{}, "", fmt.Errorf("invalid handshake length: %d", len(msg.Payload))
 	}
 
 	rNonce := msg.Payload[:len(Nonce{})]
-	rSPublic := msg.Payload[len(Nonce{}) : len(Nonce{})+X25519KeySize]
-	rEPublic := msg.Payload[len(Nonce{})+X25519KeySize:]
+	rSPublic := msg.Payload[len(Nonce{}) : len(Nonce{})+ed25519.PublicKeySize]
+	rEPublic := msg.Payload[len(Nonce{})+ed25519.PublicKeySize : len(msg.Payload)-2]
+	rPort := msg.Payload[len(msg.Payload)-2:]
+
+	dialableAddr := net.JoinHostPort(rHost, strconv.Itoa(int(binary.BigEndian.Uint16(rPort))))
 
 	rID := sha256.Sum256(rSPublic)
 
 	if validate != nil && !validate(rID) {
-		return Session{}, fmt.Errorf("peer %x not allowed", rID)
+		return Session{}, "", fmt.Errorf("peer %x not allowed", rID)
 	}
 
 	writeMessage(conn, Message{
@@ -99,53 +107,53 @@ func handshake(conn net.Conn, identity Identity, validate PeerValidator) (Sessio
 
 	msg, err = readMessage(conn)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	if msg.Type != MessageHandshakeResponse {
-		return Session{}, fmt.Errorf("expected handshake response message")
+		return Session{}, "", fmt.Errorf("expected handshake response message")
 	}
 
 	if len(msg.Payload) != SignatureLength {
-		return Session{}, fmt.Errorf("invalid signature length: %d", len(msg.Payload))
+		return Session{}, "", fmt.Errorf("invalid signature length: %d", len(msg.Payload))
 	}
 
 	if !ed25519.Verify(rSPublic, slices.Concat(rNonce, rSPublic, rEPublic, state.Nonce[:], identity.Public, state.Public.Bytes()), msg.Payload) {
-		return Session{}, fmt.Errorf("verification failed")
+		return Session{}, "", fmt.Errorf("verification failed")
 	}
 
 	rSPublicKey, err := ecdh.X25519().NewPublicKey(rEPublic)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	secret, err := state.Private.ECDH(rSPublicKey)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	session.PeerID = PeerID(sha256.Sum256(rSPublic))
 
 	sendKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), session.PeerID[:])), EncryptionKeyLength)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 	session.SendAEAD, err = chacha20poly1305.NewX(sendKey)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 	receiveKey, err := hkdf.Key(sha256.New, secret, []byte{}, string(slices.Concat([]byte("to"), identity.PeerID[:])), EncryptionKeyLength)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 	session.ReceiveAEAD, err = chacha20poly1305.NewX(receiveKey)
 	if err != nil {
-		return Session{}, err
+		return Session{}, "", err
 	}
 
 	conn.SetDeadline(time.Time{})
 
-	return session, nil
+	return session, dialableAddr, nil
 }
 
 func writeMessage(w io.Writer, msg Message) error {

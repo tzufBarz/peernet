@@ -20,10 +20,11 @@ type Peer struct {
 }
 
 type LocalPeer struct {
-	identity  Identity
-	peers     map[PeerID]*Peer
-	peersMu   sync.RWMutex
-	peerStore *PeerStore
+	identity   Identity
+	peers      map[PeerID]*Peer
+	peersMu    sync.RWMutex
+	peerStore  *PeerStore
+	listenPort uint16
 }
 
 func (local *LocalPeer) listenLoop(listener net.Listener) {
@@ -136,7 +137,7 @@ func (local *LocalPeer) validate(id PeerID) bool {
 func (local *LocalPeer) handle(conn net.Conn) {
 	defer conn.Close()
 
-	session, err := handshake(conn, local.identity, local.validate)
+	session, dialableAddr, err := handshake(conn, local.identity, local.listenPort, local.validate)
 	if err != nil {
 		fmt.Printf("\rHandshake with %s failed: %v\n> ", conn.RemoteAddr(), err)
 		return
@@ -146,6 +147,8 @@ func (local *LocalPeer) handle(conn net.Conn) {
 		Session: session,
 		Conn:    conn,
 	}
+
+	local.peerStore.UpdateAddress(session.PeerID, dialableAddr)
 
 	local.peersMu.Lock()
 
