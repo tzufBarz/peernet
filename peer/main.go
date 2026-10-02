@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"net"
-	"os"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
@@ -45,33 +45,18 @@ func main() {
 		listenPort: uint16(*port),
 	}
 
-	fmt.Printf("Peer ID: %x\n", identity.PeerID)
+	p := tea.NewProgram(initialModel(local))
 
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	local.program = p
+
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", local.listenPort))
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Listening on :%d\n", *port)
-
 	go local.listenLoop(listener)
 
-	scanner := bufio.NewScanner(os.Stdin)
-
-	fmt.Print("> ")
-
-	for scanner.Scan() {
-		exit, err := executeCommand(local, scanner.Text())
-		if err != nil {
-			fmt.Println(err)
-		}
-		if exit {
-			return
-		}
-		fmt.Print("\r> ")
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error encountered while reading: %v", err)
+	if _, err := p.Run(); err != nil {
+		log.Fatalf("Failed to run program: %v", err)
 	}
 }

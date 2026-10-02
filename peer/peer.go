@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 type PeerID [32]byte
@@ -25,6 +27,7 @@ type LocalPeer struct {
 	peersMu    sync.RWMutex
 	peerStore  *PeerStore
 	listenPort uint16
+	program    *tea.Program
 }
 
 func (local *LocalPeer) listenLoop(listener net.Listener) {
@@ -33,7 +36,7 @@ func (local *LocalPeer) listenLoop(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println(err)
+			local.program.Send(err)
 			continue
 		}
 
@@ -139,7 +142,7 @@ func (local *LocalPeer) handle(conn net.Conn) {
 
 	session, dialableAddr, err := handshake(conn, local.identity, local.listenPort, local.validate)
 	if err != nil {
-		fmt.Printf("\rHandshake with %s failed: %v\n> ", conn.RemoteAddr(), err)
+		local.log("\rHandshake with %s failed: %v", conn.RemoteAddr(), err)
 		return
 	}
 
@@ -172,22 +175,27 @@ func (local *LocalPeer) handle(conn net.Conn) {
 		local.peersMu.Unlock()
 	}()
 
-	fmt.Printf("\rConnected to %s (%s)\n> ", local.getPeerName(session.PeerID), conn.RemoteAddr())
+	local.log("\rConnected to %s (%s)", local.getPeerName(session.PeerID), conn.RemoteAddr())
 
 	for {
 		msg, err := peer.ReadMessage()
 		if err != nil {
-			fmt.Printf("\rDisconnected from %s (%s): %v\n> ", local.getPeerName(session.PeerID), conn.RemoteAddr(), err)
+			local.log("\rDisconnected from %s (%s): %v", local.getPeerName(session.PeerID), conn.RemoteAddr(), err)
 			return
 		}
 
 		switch msg.Type {
 		case MessageText:
-			fmt.Printf("\r<%s> %s\n> ", local.getPeerName(session.PeerID), msg.Payload)
+			if local.program != nil {
+				local.program.Send(ChatEvent{
+					Sender:  local.getPeerName(session.PeerID),
+					Content: string(msg.Payload),
+				})
+			}
 		case MessagePing:
 			peer.WriteMessage(Message{Type: MessagePong})
 		case MessagePong:
-			fmt.Printf("\r[%s] Pong!\n> ", local.getPeerName(session.PeerID))
+			local.log("\r[%s] Pong!", local.getPeerName(session.PeerID))
 		}
 	}
 }
@@ -205,4 +213,10 @@ func (local *LocalPeer) getPeerName(id PeerID) string {
 	}
 
 	return fmt.Sprintf("%x", id[:4])
+}
+
+func (local *LocalPeer) log(format string, args ...any) {
+	if local.program != nil {
+		local.program.Send(LogEvent(fmt.Sprintf(format, args...)))
+	}
 }
