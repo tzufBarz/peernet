@@ -172,12 +172,12 @@ func (local *LocalPeer) handle(conn net.Conn) {
 		local.peersMu.Unlock()
 	}()
 
-	fmt.Printf("\rConnected to %x\n> ", session.PeerID)
+	fmt.Printf("\rConnected to %s (%s)\n> ", local.getPeerName(session.PeerID), conn.RemoteAddr())
 
 	for {
 		msg, err := peer.ReadMessage()
 		if err != nil {
-			fmt.Printf("\rDisconnected from %s: %v\n> ", local.getPeerName(session.PeerID), err)
+			fmt.Printf("\rDisconnected from %s (%s): %v\n> ", local.getPeerName(session.PeerID), conn.RemoteAddr(), err)
 			return
 		}
 
