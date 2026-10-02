@@ -66,7 +66,7 @@ func fakeValidate(id PeerID) bool {
 }
 
 func asyncHandshake(resultChan chan HandshakeResult, conn net.Conn, identity Identity) {
-	session, err := handshake(conn, identity, fakeValidate)
+	session, _, err := handshake(conn, identity, 0, fakeValidate)
 	if err != nil {
 		resultChan <- HandshakeResult{Err: err}
 		return
