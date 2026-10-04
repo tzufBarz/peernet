@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
 
@@ -23,6 +24,8 @@ type ChatEvent struct {
 	Sender  string
 	Content string
 }
+
+var headerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#5A56E0")).Bold(true).Width(sha256.Size * 2)
 
 func initialModel(local *LocalPeer) model {
 	ti := textinput.New()
@@ -57,6 +60,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetHeight(msg.Height - headerHeight - footerHeight)
 		m.textinput.SetWidth(msg.Width)
 
+		m.viewport.SetContent(m.viewportContent())
+		m.viewport.GotoBottom()
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -90,9 +96,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	s := fmt.Sprintf("Peer ID: %x\n", m.local.identity.PeerID)
-	s += fmt.Sprintf("Listening on :%d\n", m.local.listenPort)
-	s += fmt.Sprintf("%s\n%s", m.viewport.View(), m.textinput.View())
+	header := headerStyle.Render(fmt.Sprintf("%x\nListening on :%d", m.local.identity.PeerID, m.local.listenPort))
+
+	s := fmt.Sprintf("%s\n%s\n%s", header, m.viewport.View(), m.textinput.View())
 
 	return tea.NewView(s)
 }
