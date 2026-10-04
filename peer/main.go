@@ -56,6 +56,8 @@ func main() {
 
 	go local.listenLoop(listener)
 
+	go local.autoconnect()
+
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Failed to run program: %v", err)
 	}

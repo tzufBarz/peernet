@@ -44,6 +44,19 @@ func (local *LocalPeer) listenLoop(listener net.Listener) {
 	}
 }
 
+func (local *LocalPeer) autoconnect() {
+	local.log("Autoconnecting...")
+
+	for _, record := range local.peerStore.peers {
+		conn, err := net.Dial("tcp", record.Address)
+		if err != nil {
+			local.log("Failed to connect to %s: %v", record.Name, err)
+		} else {
+			local.handle(conn)
+		}
+	}
+}
+
 func (local *LocalPeer) connect(name string) error {
 	record, ok := local.peerStore.GetByName(name)
 	if !ok {
